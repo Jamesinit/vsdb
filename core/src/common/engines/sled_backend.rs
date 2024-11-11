@@ -1,12 +1,13 @@
 use crate::common::{
     vsdb_get_base_dir, vsdb_set_base_dir, Engine, Pre, PreBytes, RawKey, RawValue,
-     PREFIX_SIZE, RESERVED_ID_CNT,
+    PREFIX_SIZE, RESERVED_ID_CNT,
 };
 use parking_lot::Mutex;
-use sled_db::{self,Db as DB,Mode,Iter};
 use ruc::*;
+use sled_db::{self, Db as DB, Iter, Mode};
 use std::{
     borrow::Cow,
+    ops::RangeBounds,
     sync::{
         atomic::{AtomicUsize, Ordering},
         LazyLock,
@@ -43,21 +44,21 @@ impl SledEngine {
             .unwrap();
     }
 
-    #[inline(always)]
-    fn get_upper_bound_value(&self, meta_prefix: PreBytes) -> Vec<u8> {
-        const BUF: [u8; 256] = [u8::MAX; 256];
+    // #[inline(always)]
+    // fn get_upper_bound_value(&self, meta_prefix: PreBytes) -> Vec<u8> {
+    //     const BUF: [u8; 256] = [u8::MAX; 256];
 
-        let mut max_guard = meta_prefix.to_vec();
+    //     let mut max_guard = meta_prefix.to_vec();
 
-        let l = self.get_max_keylen();
-        if l < 257 {
-            max_guard.extend_from_slice(&BUF[..l]);
-        } else {
-            max_guard.extend_from_slice(&vec![u8::MAX; l]);
-        }
+    //     let l = self.get_max_keylen();
+    //     if l < 257 {
+    //         max_guard.extend_from_slice(&BUF[..l]);
+    //     } else {
+    //         max_guard.extend_from_slice(&vec![u8::MAX; l]);
+    //     }
 
-        max_guard
-    }
+    //     max_guard
+    // }
     // ==== assist functions ====
     //  get specific Tree  by area_idx
     #[inline(always)]
@@ -73,17 +74,17 @@ impl Engine for SledEngine {
 
         let (prefix_allocator, initial_value) = PreAllocator::init();
 
-               
         if hdr.get(META_KEY_MAX_KEYLEN).c(d!())?.is_none() {
-            hdr.insert(META_KEY_MAX_KEYLEN, 0_usize.to_be_bytes().to_vec())
+            hdr.insert(META_KEY_MAX_KEYLEN, 0_usize.to_string().as_bytes())
                 .c(d!())?;
         }
 
-        if hdr.get(&prefix_allocator.key).unwrap().is_none() {
-            hdr.insert(prefix_allocator.key, initial_value.to_vec()).unwrap();
+        if hdr.get(prefix_allocator.key).unwrap().is_none() {
+            hdr.insert(prefix_allocator.key, initial_value.to_vec())
+                .unwrap();
         }
         let max_keylen = AtomicUsize::new(crate::parse_int!(
-           hdr.get(META_KEY_MAX_KEYLEN).unwrap().unwrap().as_ref(),
+            hdr.get(META_KEY_MAX_KEYLEN).unwrap().unwrap().as_ref(),
             usize
         ));
 
@@ -129,17 +130,16 @@ impl Engine for SledEngine {
         key: &[u8],
         value: &[u8],
     ) -> Option<RawValue> {
-
         if key.len() > self.get_max_keylen() {
             self.set_max_key_len(key.len());
         }
-         let area_tree = self.get_area_tree(hdr_prefix);
-         let old_v = area_tree.get(&key).unwrap(); 
-         area_tree.insert(key, value).unwrap();
-         let old_v = old_v.map(|iv| iv.as_ref().to_vec());
-         old_v
-     }
-    
+        let area_tree = self.get_area_tree(hdr_prefix);
+        let old_v = area_tree.get(key).unwrap();
+        area_tree.insert(key, value).unwrap();
+        let old_v = old_v.map(|iv| iv.as_ref().to_vec());
+        old_v
+    }
+
     fn get(&self, hdr_prefix: PreBytes, key: &[u8]) -> Option<RawValue> {
         let area_tree = self.get_area_tree(hdr_prefix);
         let v = area_tree.get(key).unwrap();
@@ -148,25 +148,22 @@ impl Engine for SledEngine {
 
     fn remove(&self, hdr_prefix: PreBytes, key: &[u8]) -> Option<RawValue> {
         let area_tree = self.get_area_tree(hdr_prefix);
-        let old_v = area_tree.get( &key).unwrap();
-        area_tree.remove(&key).unwrap();
+        let old_v = area_tree.get(key).unwrap();
+        area_tree.remove(key).unwrap();
         let old_v = old_v.map(|iv| iv.as_ref().to_vec());
         old_v
     }
 
     fn get_instance_len_hint(&self, instance_prefix: PreBytes) -> u64 {
         let tree = self.get_area_tree(instance_prefix);
-        crate::parse_int!(tree.len(), u64)
+        tree.len() as u64
     }
 
     #[allow(unused_variables)]
-    fn set_instance_len_hint(&self, instance_prefix: PreBytes, new_len: u64) {
-    }
+    fn set_instance_len_hint(&self, instance_prefix: PreBytes, new_len: u64) {}
     fn iter(&self, hdr_prefix: PreBytes) -> SledIter {
         let inner = self.get_area_tree(hdr_prefix).iter();
-        SledIter{
-            inner
-        }
+        SledIter { inner }
     }
 
     fn range<'a, R: RangeBounds<Cow<'a, [u8]>>>(
@@ -174,14 +171,9 @@ impl Engine for SledEngine {
         hdr_prefix: PreBytes,
         bounds: R,
     ) -> SledIter {
-
         let inner = self.get_area_tree(hdr_prefix).range(bounds);
-        SledIter{
-            inner
-        }
-
+        SledIter { inner }
     }
-
 }
 
 pub struct SledIter {
@@ -200,7 +192,8 @@ impl Iterator for SledIter {
 
 impl DoubleEndedIterator for SledIter {
     fn next_back(&mut self) -> Option<Self::Item> {
-        self.inner.next_back()
+        self.inner
+            .next_back()
             .map(|v| v.unwrap())
             .map(|(ik, iv)| (ik[PREFIX_SIZE..].to_vec(), iv.as_ref().to_vec()))
     }
@@ -232,14 +225,14 @@ fn sled_db_open() -> Result<DB> {
     omit!(vsdb_set_base_dir(&dir));
 
     let cfg = sled_db::Config::default()
-    .path(&dir)
-    //set system page cache 256 MB
-    .cache_capacity(256 * 1024 * 1024) 
-    // fastest
-    .mode(Mode::HighThroughput); 
+        .path(&dir)
+        //set system page cache 256 MB
+        .cache_capacity(256 * 1024 * 1024)
+        // fastest
+        .mode(Mode::HighThroughput);
 
     #[cfg(feature = "compress")]
-    let cfg  = cfg.use_compression(true).compression_factor(20); 
+    let cfg = cfg.use_compression(true).compression_factor(20);
 
     let db = cfg.open().c(d!())?;
     Ok(db)
