@@ -84,14 +84,6 @@ impl Engine for SledEngine {
             hdr.insert(prefix_allocator.key, initial_value.to_vec())
                 .unwrap();
         }
-        // let max_keylen = usize::from_be_bytes(
-        //     hdr.get(META_KEY_MAX_KEYLEN)
-        //         .unwrap()
-        //         .unwrap()
-        //         .as_ref()
-        //         .try_into()
-        //         .unwrap(),
-        // );
         let max_keylen = AtomicUsize::new(crate::parse_int!(
             hdr.get(META_KEY_MAX_KEYLEN)
                 .unwrap()
